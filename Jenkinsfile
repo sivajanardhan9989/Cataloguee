@@ -6,10 +6,10 @@ pipeline {
     }
 
     environment {
-        ACC_ID      = '209115427888'
-        PROJECT     = 'roboshop'
-        COMPONENT   = 'catalogue'
-        AWS_REGION  = 'us-east-1'
+        ACC_ID     = '209115427888'
+        PROJECT    = 'roboshop'
+        COMPONENT  = 'catalogue'
+        AWS_REGION = 'us-east-1'
     }
 
     options {
@@ -18,7 +18,6 @@ pipeline {
     }
 
     stages {
-
         stage('Read Version') {
             steps {
                 script {
@@ -44,6 +43,52 @@ pipeline {
             }
         }
 
+        stage('Check Dependabot Alerts') {
+            steps {
+                withCredentials([
+                    string(
+                        credentialsId: 'github-token',
+                        variable: 'GH_TOKEN'
+                    )
+                ]) {
+                    sh '''
+                        set -eu
+
+                        REPO="sivajanardhan9989/Cataloguee"
+                        API_URL="https://api.github.com/repos/${REPO}/dependabot/alerts?state=open&per_page=100"
+
+                        curl --fail --silent --show-error --location \
+                            -H "Accept: application/vnd.github+json" \
+                            -H "Authorization: Bearer ${GH_TOKEN}" \
+                            -H "X-GitHub-Api-Version: 2022-11-28" \
+                            "${API_URL}" \
+                            -o alerts.json
+
+                        echo "---- Open Dependabot Alerts ----"
+
+                        jq -r '.[] |
+                            "\\(.number)\\t\\(.security_vulnerability.severity)\\t\\(.dependency.package.name)\\t\\(.security_advisory.ghsa_id)"' \
+                            alerts.json
+
+                        HIGH_CRITICAL_COUNT=$(jq \
+                            '[.[] | select(
+                                .security_vulnerability.severity == "high" or
+                                .security_vulnerability.severity == "critical"
+                            )] | length' alerts.json)
+
+                        echo "High/Critical alert count: ${HIGH_CRITICAL_COUNT}"
+
+                        if [ "${HIGH_CRITICAL_COUNT}" -gt 0 ]; then
+                            echo "High/Critical Dependabot alerts found. Failing build."
+                            exit 1
+                        fi
+
+                        echo "No High/Critical alerts found."
+                    '''
+                }
+            }
+        }
+
         stage('SonarQube Analysis') {
             steps {
                 script {
@@ -52,8 +97,7 @@ pipeline {
                     withSonarQubeEnv('sonar-server') {
                         sh """
                             set -eu
-
-                            "${scannerHome}/bin/sonar-scanner" \
+                            "\${scannerHome}/bin/sonar-scanner" \
                               -Dsonar.projectKey=Roboshop-catalogue \
                               -Dsonar.projectName=Roboshop-catalogue \
                               -Dsonar.sources=. \
@@ -68,9 +112,8 @@ pipeline {
             steps {
                 timeout(time: 10, unit: 'MINUTES') {
                     script {
-                        def qualityGate = waitForQualityGate(
-                            abortPipeline: true
-                        )
+                        def qualityGate =
+                            waitForQualityGate(abortPipeline: true)
 
                         echo "SonarQube Quality Gate: ${qualityGate.status}"
                     }
@@ -119,7 +162,6 @@ pipeline {
 
                     sh """
                         set -eu
-
                         trivy image \
                           --severity HIGH,CRITICAL \
                           --exit-code 1 \
@@ -160,7 +202,6 @@ pipeline {
                                 --password-stdin '${registry}'
 
                             echo "Pushing Docker image: ${image}"
-
                             docker push '${image}'
                         """
                     }
