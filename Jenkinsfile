@@ -6,16 +6,15 @@ pipeline {
     }
 
     environment {
-        ACC_ID    = "209115427888"
-        PROJECT   = "roboshop"
-        COMPONENT = "catalogue"
-        APP_VERSION = ""
-        AWS_REGION = "us-east-1"
+        ACC_ID      = '209115427888'
+        PROJECT     = 'roboshop'
+        COMPONENT   = 'catalogue'
+        AWS_REGION  = 'us-east-1'
     }
 
     options {
         disableConcurrentBuilds()
-        timeout(time: 20, unit: 'MINUTES')
+        timeout(time: 30, unit: 'MINUTES')
     }
 
     stages {
@@ -26,10 +25,10 @@ pipeline {
                     def config = readJSON file: 'package.json'
 
                     if (!config.version?.toString()?.trim()) {
-                        error "Version is missing or empty in package.json"
+                        error 'Version is missing or empty in package.json'
                     }
 
-                    env.APP_VERSION = config.version.toString()
+                    env.APP_VERSION = config.version.toString().trim()
 
                     echo "Application version: ${env.APP_VERSION}"
                 }
@@ -82,6 +81,10 @@ pipeline {
         stage('Docker Build') {
             steps {
                 script {
+                    if (!env.APP_VERSION?.trim()) {
+                        error 'APP_VERSION is empty. Check the Read Version stage.'
+                    }
+
                     withAWS(
                         credentials: 'aws-creds',
                         region: "${AWS_REGION}"
@@ -103,6 +106,10 @@ pipeline {
         stage('Docker Push') {
             steps {
                 script {
+                    if (!env.APP_VERSION?.trim()) {
+                        error 'APP_VERSION is empty. Cannot push Docker image.'
+                    }
+
                     withAWS(
                         credentials: 'aws-creds',
                         region: "${AWS_REGION}"
@@ -110,8 +117,8 @@ pipeline {
                         sh '''
                             set -e
 
-                            REPOSITORY="${ACC_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT}/${COMPONENT}"
-                            IMAGE="${REPOSITORY}:${APP_VERSION}"
+                            ECR_REGISTRY="${ACC_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+                            IMAGE="${ECR_REGISTRY}/${PROJECT}/${COMPONENT}:${APP_VERSION}"
 
                             echo "Logging in to Amazon ECR"
 
@@ -119,8 +126,7 @@ pipeline {
                               --region "${AWS_REGION}" | \
                               docker login \
                                 --username AWS \
-                                --password-stdin \
-                                "${ACC_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+                                --password-stdin "${ECR_REGISTRY}"
 
                             echo "Pushing Docker image: ${IMAGE}"
 
@@ -135,15 +141,16 @@ pipeline {
     post {
         success {
             echo "Catalogue pipeline completed successfully."
-            echo "Application version: ${env.APP_VERSION}"
+            echo "Published application version: ${env.APP_VERSION}"
         }
 
         failure {
-            echo "Catalogue pipeline failed. Check the Jenkins console output."
+            echo 'Catalogue pipeline failed. Check the Jenkins console output.'
         }
 
         always {
-            echo "Pipeline execution finished."
+            echo 'Pipeline execution finished.'
         }
     }
 }
+
