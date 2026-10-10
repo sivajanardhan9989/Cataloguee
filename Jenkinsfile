@@ -6,11 +6,10 @@ pipeline {
     }
 
     environment {
-        ACC_ID       = '209115427888'
-        PROJECT      = 'roboshop'
-        COMPONENT    = 'catalogue'
-        AWS_REGION   = 'us-east-1'
-        APP_VERSION  = ''
+        ACC_ID      = '209115427888'
+        PROJECT     = 'roboshop'
+        COMPONENT   = 'catalogue'
+        AWS_REGION  = 'us-east-1'
     }
 
     options {
@@ -24,14 +23,16 @@ pipeline {
             steps {
                 script {
                     def config = readJSON file: 'package.json'
+                    def version = config.version?.toString()?.trim()
 
-                    if (!config.version?.toString()?.trim()) {
+                    if (!version) {
                         error 'Version is missing or empty in package.json'
                     }
 
-                    env.APP_VERSION = config.version.toString().trim()
+                    // Store the version for later stages.
+                    env.APP_VERSION = version
 
-                    echo "Application version: ${env.APP_VERSION}"
+                    echo "Application version: ${version}"
                 }
             }
         }
@@ -39,7 +40,7 @@ pipeline {
         stage('Install Dependencies') {
             steps {
                 sh '''
-                    set -e
+                    set -eu
                     npm install
                 '''
             }
@@ -52,7 +53,7 @@ pipeline {
 
                     withSonarQubeEnv('sonar-server') {
                         sh """
-                            set -e
+                            set -eu
 
                             "${scannerHome}/bin/sonar-scanner" \
                               -Dsonar.projectKey=Roboshop-catalogue \
@@ -82,24 +83,24 @@ pipeline {
         stage('Docker Build') {
             steps {
                 script {
-                    if (!env.APP_VERSION?.trim()) {
-                        error 'APP_VERSION is empty. Cannot build Docker image.'
+                    // Read directly from package.json to avoid an empty version.
+                    def config = readJSON file: 'package.json'
+                    def version = config.version?.toString()?.trim()
+
+                    if (!version) {
+                        error 'Version is missing from package.json'
                     }
 
-                    withAWS(
-                        credentials: 'aws-creds',
-                        region: 'us-east-1'
-                    ) {
-                        sh '''
-                            set -e
+                    env.APP_VERSION = version
 
-                            IMAGE="${ACC_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT}/${COMPONENT}:${APP_VERSION}"
+                    def image = "${env.ACC_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/${env.PROJECT}/${env.COMPONENT}:${version}"
 
-                            echo "Building Docker image: ${IMAGE}"
+                    echo "Building Docker image: ${image}"
 
-                            docker build -t "${IMAGE}" .
-                        '''
-                    }
+                    sh """
+                        set -eu
+                        docker build -t '${image}' .
+                    """
                 }
             }
         }
@@ -107,16 +108,20 @@ pipeline {
         stage('Trivy Image Scan') {
             steps {
                 script {
-                    if (!env.APP_VERSION?.trim()) {
-                        error 'APP_VERSION is empty. Cannot scan Docker image.'
+                    // Use the same version that was used to build the image.
+                    def config = readJSON file: 'package.json'
+                    def version = config.version?.toString()?.trim()
+
+                    if (!version) {
+                        error 'Version is missing. Cannot scan Docker image.'
                     }
 
-                    def image = "${env.ACC_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/${env.PROJECT}/${env.COMPONENT}:${env.APP_VERSION}"
+                    def image = "${env.ACC_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/${env.PROJECT}/${env.COMPONENT}:${version}"
+
+                    echo "Scanning Docker image: ${image}"
 
                     sh """
-                        set -e
-
-                        echo "Scanning Docker image: ${image}"
+                        set -eu
 
                         trivy image \
                           --severity HIGH,CRITICAL \
@@ -131,32 +136,36 @@ pipeline {
         stage('Docker Push') {
             steps {
                 script {
-                    if (!env.APP_VERSION?.trim()) {
-                        error 'APP_VERSION is empty. Cannot push Docker image.'
+                    // Resolve the same image tag from package.json.
+                    def config = readJSON file: 'package.json'
+                    def version = config.version?.toString()?.trim()
+
+                    if (!version) {
+                        error 'Version is missing. Cannot push Docker image.'
                     }
+
+                    def registry = "${env.ACC_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com"
+                    def image = "${registry}/${env.PROJECT}/${env.COMPONENT}:${version}"
 
                     withAWS(
                         credentials: 'aws-creds',
                         region: 'us-east-1'
                     ) {
-                        sh '''
-                            set -e
-
-                            ECR_REGISTRY="${ACC_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-                            IMAGE="${ECR_REGISTRY}/${PROJECT}/${COMPONENT}:${APP_VERSION}"
+                        sh """
+                            set -eu
 
                             echo "Logging in to Amazon ECR"
 
                             aws ecr get-login-password \
-                              --region "${AWS_REGION}" | \
+                              --region '${env.AWS_REGION}' | \
                               docker login \
                                 --username AWS \
-                                --password-stdin "${ECR_REGISTRY}"
+                                --password-stdin '${registry}'
 
-                            echo "Pushing Docker image: ${IMAGE}"
+                            echo "Pushing Docker image: ${image}"
 
-                            docker push "${IMAGE}"
-                        '''
+                            docker push '${image}'
+                        """
                     }
                 }
             }
@@ -165,8 +174,10 @@ pipeline {
 
     post {
         success {
-            echo "Catalogue pipeline completed successfully."
-            echo "Published application version: ${env.APP_VERSION}"
+            script {
+                def config = readJSON file: 'package.json'
+                echo "Catalogue pipeline completed successfully. Version: ${config.version}"
+            }
         }
 
         failure {
