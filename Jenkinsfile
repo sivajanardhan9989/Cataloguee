@@ -1,3 +1,4 @@
+
 pipeline {
     agent {
         node {
@@ -6,15 +7,15 @@ pipeline {
     }
 
     environment {
-        acc_id = "209115427888"
-        project = "roboshop"
-        component = "catalogue"
-        appVersion = ""
+        ACC_ID = "209115427888"
+        PROJECT = "roboshop"
+        COMPONENT = "catalogue"
+        APP_VERSION = ""
     }
 
     options {
         disableConcurrentBuilds()
-        timeout(time: 15, unit: 'MINUTES')
+        timeout(time: 20, unit: 'MINUTES')
     }
 
     stages {
@@ -23,35 +24,64 @@ pipeline {
             steps {
                 script {
                     def config = readJSON file: 'package.json'
-                    appVersion = config.version
+                    env.APP_VERSION = config.version.toString()
 
-                    echo "The application version is: ${appVersion}"
+                    echo "The application version is: ${env.APP_VERSION}"
                 }
             }
         }
 
         stage('Install dependencies') {
             steps {
-                sh '''
-                    npm install
-                '''
+                sh 'npm install'
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                script {
+                    def scannerHome = tool 'sonar-scanner'
+
+                    withSonarQubeEnv('sonar-server') {
+                        sh """
+                            ${scannerHome}/bin/sonar-scanner \
+                              -Dsonar.projectKey=Roboshop-catalogue \
+                              -Dsonar.projectName=Roboshop-catalogue \
+                              -Dsonar.sources=.
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('SonarQube Quality Gate') {
+            steps {
+                timeout(time: 10, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
             }
         }
 
         stage('Docker Build') {
             steps {
                 script {
-                    // Get AWS authentication
-                    withAWS(credentials: 'aws-creds', region: 'us-east-1') {
-                        sh """
-                            aws ecr get-login-password --region us-east-1 | \
-                            docker login --username AWS --password-stdin \
-                            ${acc_id}.dkr.ecr.us-east-1.amazonaws.com
+                    withAWS(
+                        credentials: 'aws-creds',
+                        region: 'us-east-1'
+                    ) {
+                        sh '''
+                            set -eu
 
-                            docker build -t \
-                            ${acc_id}.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${appVersion} \
-                            .
-                        """
+                            IMAGE="${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com/${PROJECT}/${COMPONENT}:${APP_VERSION}"
+
+                            aws ecr get-login-password --region us-east-1 |
+                                docker login \
+                                    --username AWS \
+                                    --password-stdin \
+                                    "${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com"
+
+                            docker build -t "${IMAGE}" .
+                        '''
                     }
                 }
             }
@@ -60,11 +90,17 @@ pipeline {
         stage('Docker Push') {
             steps {
                 script {
-                    withAWS(credentials: 'aws-creds', region: 'us-east-1') {
-                        sh """
-                            docker push \
-                            ${acc_id}.dkr.ecr.us-east-1.amazonaws.com/${project}/${component}:${appVersion}
-                        """
+                    withAWS(
+                        credentials: 'aws-creds',
+                        region: 'us-east-1'
+                    ) {
+                        sh '''
+                            set -eu
+
+                            IMAGE="${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com/${PROJECT}/${COMPONENT}:${APP_VERSION}"
+
+                            docker push "${IMAGE}"
+                        '''
                     }
                 }
             }
@@ -73,17 +109,15 @@ pipeline {
 
     post {
         always {
-            echo 'I will always say Hello again!'
+            echo 'Pipeline execution finished.'
         }
 
         success {
-            echo 'I will run when success'
+            echo 'Pipeline completed successfully.'
         }
 
         failure {
-            echo 'I will run when it is failed'
+            echo 'Pipeline failed. Check the Console Output.'
         }
     }
 }
-
-// http://23.22.226.61:8080/
