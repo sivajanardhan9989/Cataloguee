@@ -6,10 +6,11 @@ pipeline {
     }
 
     environment {
-        ACC_ID      = '209115427888'
-        PROJECT     = 'roboshop'
-        COMPONENT   = 'catalogue'
-        AWS_REGION  = 'us-east-1'
+        ACC_ID       = '209115427888'
+        PROJECT      = 'roboshop'
+        COMPONENT    = 'catalogue'
+        AWS_REGION   = 'us-east-1'
+        APP_VERSION  = ''
     }
 
     options {
@@ -82,12 +83,12 @@ pipeline {
             steps {
                 script {
                     if (!env.APP_VERSION?.trim()) {
-                        error 'APP_VERSION is empty. Check the Read Version stage.'
+                        error 'APP_VERSION is empty. Cannot build Docker image.'
                     }
 
                     withAWS(
                         credentials: 'aws-creds',
-                        region: "${AWS_REGION}"
+                        region: 'us-east-1'
                     ) {
                         sh '''
                             set -e
@@ -103,6 +104,30 @@ pipeline {
             }
         }
 
+        stage('Trivy Image Scan') {
+            steps {
+                script {
+                    if (!env.APP_VERSION?.trim()) {
+                        error 'APP_VERSION is empty. Cannot scan Docker image.'
+                    }
+
+                    def image = "${env.ACC_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/${env.PROJECT}/${env.COMPONENT}:${env.APP_VERSION}"
+
+                    sh """
+                        set -e
+
+                        echo "Scanning Docker image: ${image}"
+
+                        trivy image \
+                          --severity HIGH,CRITICAL \
+                          --exit-code 1 \
+                          --no-progress \
+                          '${image}'
+                    """
+                }
+            }
+        }
+
         stage('Docker Push') {
             steps {
                 script {
@@ -112,7 +137,7 @@ pipeline {
 
                     withAWS(
                         credentials: 'aws-creds',
-                        region: "${AWS_REGION}"
+                        region: 'us-east-1'
                     ) {
                         sh '''
                             set -e
@@ -153,4 +178,3 @@ pipeline {
         }
     }
 }
-
