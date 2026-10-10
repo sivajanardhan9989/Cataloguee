@@ -4,7 +4,7 @@
   "description": "product catalogue REST API",
   "main": "server.js",
   "scripts": {
-    "test": "jest --testPathPattern=test/ --coverage --forceExit"
+    "test": "est --testPathPatterns=test/ --coverage --forceExit --passWithNoTests"
   },
   "jest": {
     "coverageDirectory": "coverage",
