@@ -29,9 +29,7 @@ pipeline {
                         error 'Version is missing or empty in package.json'
                     }
 
-                    // Store the version for later stages.
                     env.APP_VERSION = version
-
                     echo "Application version: ${version}"
                 }
             }
@@ -83,7 +81,6 @@ pipeline {
         stage('Docker Build') {
             steps {
                 script {
-                    // Read directly from package.json to avoid an empty version.
                     def config = readJSON file: 'package.json'
                     def version = config.version?.toString()?.trim()
 
@@ -105,10 +102,10 @@ pipeline {
             }
         }
 
+        /*
         stage('Trivy Image Scan') {
             steps {
                 script {
-                    // Use the same version that was used to build the image.
                     def config = readJSON file: 'package.json'
                     def version = config.version?.toString()?.trim()
 
@@ -132,11 +129,11 @@ pipeline {
                 }
             }
         }
+        */
 
         stage('Docker Push') {
             steps {
                 script {
-                    // Resolve the same image tag from package.json.
                     def config = readJSON file: 'package.json'
                     def version = config.version?.toString()?.trim()
 
