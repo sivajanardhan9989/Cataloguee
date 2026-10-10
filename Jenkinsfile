@@ -1,6 +1,12 @@
-@Library('roboshop-shared-library') _
+@Library('roboshop-shared-library@main') _
 
-testPipeline(
-    project: 'roboshop',
+def configMap = [
+    project  : 'roboshop',
     component: 'catalogue'
-)
+]
+
+if (env.BRANCH_NAME?.equalsIgnoreCase('main')) {
+    nodejsEKSMain(configMap)
+} else {
+    nodejsEKSPipeline(configMap)
+}
