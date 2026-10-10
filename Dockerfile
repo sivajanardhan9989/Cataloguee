@@ -1,33 +1,30 @@
-FROM node:22-alpine3.23 AS builder
+FROM node:20.20.2-alpine3.23 AS builder
+
+# Set the working directory
+WORKDIR /app
+
+COPY package.json .
+COPY *.js .
+
+# Install dependencies
+RUN npm install
+
+# Runtime stage
+FROM node:20.20.2-alpine3.23
 
 WORKDIR /app
 
-COPY package.json package-lock.json ./
-RUN npm ci
-
-COPY *.js ./
-
-# Set read-only permissions on application files.
-# Directories need execute permission for traversal.
-RUN find /app -type d -exec chmod 0550 {} \; && \
-    find /app -type f -exec chmod 0440 {} \;
-
-# Stage 2: Runtime image
-FROM node:22-alpine3.23
-
-WORKDIR /app
+EXPOSE 8080
 
 ENV MONGO="true" \
     MONGO_URL="mongodb://mongodb:27017/catalogue"
 
-EXPOSE 8080
+RUN apk update && apk upgrade --no-cache && \
+    addgroup -S roboshop && \
+    adduser -S -G roboshop roboshop && \
+    chown -R roboshop:roboshop /app
 
-# Create a non-root application user
-RUN addgroup -S roboshop && \
-    adduser -S -G roboshop roboshop
-
-# Copy application files without write permissions
-COPY --from=builder --chown=roboshop:roboshop /app /app
+COPY --from=builder /app /app
 
 USER roboshop
 
