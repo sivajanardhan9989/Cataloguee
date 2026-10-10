@@ -38,8 +38,14 @@ pipeline {
             steps {
                 sh '''
                     set -eu
-                    npm install
+                    npm ci
                 '''
+            }
+        }
+
+        stage('Test') {
+            steps {
+                sh 'npm test'
             }
         }
 
@@ -79,7 +85,7 @@ pipeline {
                         echo "High/Critical alert count: ${HIGH_CRITICAL_COUNT}"
 
                         if [ "${HIGH_CRITICAL_COUNT}" -gt 0 ]; then
-                            echo "High/Critical Dependabot alerts found. Failing build."
+                            echo "High/Critical Dependabot alerts found."
                             exit 1
                         fi
 
@@ -97,7 +103,7 @@ pipeline {
                     withSonarQubeEnv('sonar-server') {
                         sh """
                             set -eu
-                            "\${scannerHome}/bin/sonar-scanner" \
+                            "${scannerHome}/bin/sonar-scanner" \
                               -Dsonar.projectKey=Roboshop-catalogue \
                               -Dsonar.projectName=Roboshop-catalogue \
                               -Dsonar.sources=. \
@@ -149,16 +155,7 @@ pipeline {
         stage('Trivy Image Scan') {
             steps {
                 script {
-                    def config = readJSON file: 'package.json'
-                    def version = config.version?.toString()?.trim()
-
-                    if (!version) {
-                        error 'Version is missing. Cannot scan Docker image.'
-                    }
-
-                    def image = "${env.ACC_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/${env.PROJECT}/${env.COMPONENT}:${version}"
-
-                    echo "Scanning Docker image: ${image}"
+                    def image = "${env.ACC_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com/${env.PROJECT}/${env.COMPONENT}:${env.APP_VERSION}"
 
                     sh """
                         set -eu
@@ -176,24 +173,15 @@ pipeline {
         stage('Docker Push') {
             steps {
                 script {
-                    def config = readJSON file: 'package.json'
-                    def version = config.version?.toString()?.trim()
-
-                    if (!version) {
-                        error 'Version is missing. Cannot push Docker image.'
-                    }
-
                     def registry = "${env.ACC_ID}.dkr.ecr.${env.AWS_REGION}.amazonaws.com"
-                    def image = "${registry}/${env.PROJECT}/${env.COMPONENT}:${version}"
+                    def image = "${registry}/${env.PROJECT}/${env.COMPONENT}:${env.APP_VERSION}"
 
                     withAWS(
                         credentials: 'aws-creds',
-                        region: 'us-east-1'
+                        region: env.AWS_REGION
                     ) {
                         sh """
                             set -eu
-
-                            echo "Logging in to Amazon ECR"
 
                             aws ecr get-login-password \
                               --region '${env.AWS_REGION}' | \
@@ -201,7 +189,6 @@ pipeline {
                                 --username AWS \
                                 --password-stdin '${registry}'
 
-                            echo "Pushing Docker image: ${image}"
                             docker push '${image}'
                         """
                     }
@@ -212,10 +199,7 @@ pipeline {
 
     post {
         success {
-            script {
-                def config = readJSON file: 'package.json'
-                echo "Catalogue pipeline completed successfully. Version: ${config.version}"
-            }
+            echo 'Catalogue pipeline completed successfully.'
         }
 
         failure {
