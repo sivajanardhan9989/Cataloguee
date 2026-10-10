@@ -1,4 +1,4 @@
-
+```groovy
 pipeline {
     agent {
         node {
@@ -7,10 +7,11 @@ pipeline {
     }
 
     environment {
-        ACC_ID = "209115427888"
-        PROJECT = "roboshop"
+        ACC_ID    = "209115427888"
+        PROJECT   = "roboshop"
         COMPONENT = "catalogue"
         APP_VERSION = ""
+        AWS_REGION = "us-east-1"
     }
 
     options {
@@ -24,16 +25,24 @@ pipeline {
             steps {
                 script {
                     def config = readJSON file: 'package.json'
+
+                    if (!config.version?.toString()?.trim()) {
+                        error "Version is missing or empty in package.json"
+                    }
+
                     env.APP_VERSION = config.version.toString()
 
-                    echo "The application version is: ${env.APP_VERSION}"
+                    echo "Application version: ${env.APP_VERSION}"
                 }
             }
         }
 
-        stage('Install dependencies') {
+        stage('Install Dependencies') {
             steps {
-                sh 'npm install'
+                sh '''
+                    set -e
+                    npm install
+                '''
             }
         }
 
@@ -44,20 +53,29 @@ pipeline {
 
                     withSonarQubeEnv('sonar-server') {
                         sh """
-                            ${scannerHome}/bin/sonar-scanner \
+                            set -e
+
+                            "${scannerHome}/bin/sonar-scanner" \
                               -Dsonar.projectKey=Roboshop-catalogue \
                               -Dsonar.projectName=Roboshop-catalogue \
-                              -Dsonar.sources=.
+                              -Dsonar.sources=. \
+                              -Dsonar.exclusions=node_modules/**,coverage/**,.git/**
                         """
                     }
                 }
             }
         }
 
-        stage('SonarQube Quality Gate') {
+        stage('Quality Gate') {
             steps {
                 timeout(time: 10, unit: 'MINUTES') {
-                    waitForQualityGate abortPipeline: true
+                    script {
+                        def qualityGate = waitForQualityGate(
+                            abortPipeline: true
+                        )
+
+                        echo "SonarQube Quality Gate: ${qualityGate.status}"
+                    }
                 }
             }
         }
@@ -67,18 +85,14 @@ pipeline {
                 script {
                     withAWS(
                         credentials: 'aws-creds',
-                        region: 'us-east-1'
+                        region: "${AWS_REGION}"
                     ) {
                         sh '''
-                            set -eu
+                            set -e
 
-                            IMAGE="${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com/${PROJECT}/${COMPONENT}:${APP_VERSION}"
+                            IMAGE="${ACC_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT}/${COMPONENT}:${APP_VERSION}"
 
-                            aws ecr get-login-password --region us-east-1 |
-                                docker login \
-                                    --username AWS \
-                                    --password-stdin \
-                                    "${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com"
+                            echo "Building Docker image: ${IMAGE}"
 
                             docker build -t "${IMAGE}" .
                         '''
@@ -92,12 +106,24 @@ pipeline {
                 script {
                     withAWS(
                         credentials: 'aws-creds',
-                        region: 'us-east-1'
+                        region: "${AWS_REGION}"
                     ) {
                         sh '''
-                            set -eu
+                            set -e
 
-                            IMAGE="${ACC_ID}.dkr.ecr.us-east-1.amazonaws.com/${PROJECT}/${COMPONENT}:${APP_VERSION}"
+                            REPOSITORY="${ACC_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${PROJECT}/${COMPONENT}"
+                            IMAGE="${REPOSITORY}:${APP_VERSION}"
+
+                            echo "Logging in to Amazon ECR"
+
+                            aws ecr get-login-password \
+                              --region "${AWS_REGION}" | \
+                              docker login \
+                                --username AWS \
+                                --password-stdin \
+                                "${ACC_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+
+                            echo "Pushing Docker image: ${IMAGE}"
 
                             docker push "${IMAGE}"
                         '''
@@ -108,16 +134,18 @@ pipeline {
     }
 
     post {
-        always {
-            echo 'Pipeline execution finished.'
-        }
-
         success {
-            echo 'Pipeline completed successfully.'
+            echo "Catalogue pipeline completed successfully."
+            echo "Application version: ${env.APP_VERSION}"
         }
 
         failure {
-            echo 'Pipeline failed. Check the Console Output.'
+            echo "Catalogue pipeline failed. Check the Jenkins console output."
+        }
+
+        always {
+            echo "Pipeline execution finished."
         }
     }
 }
+```
